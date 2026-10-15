@@ -5,10 +5,10 @@ from functools import lru_cache
 from typing import Any, Protocol
 
 import httpx
-from openai import APIError, OpenAI, RateLimitError
 from pydantic import BaseModel, ValidationError
 
 from app.analysis.errors import LlmBusy, LlmFailed, LlmQuotaExceeded, LlmRejected
+from app.analysis.image_types import sniff_media_type
 from app.settings import Settings, get_settings
 
 logger = logging.getLogger(__name__)
@@ -19,7 +19,7 @@ _CLOUDFLARE_DAILY_LIMIT_CODE = "3036"
 
 
 class LlmClient(Protocol):
-    def parse[T: BaseModel](
+    async def parse[T: BaseModel](
         self,
         *,
         instructions: str,
@@ -29,8 +29,9 @@ class LlmClient(Protocol):
     ) -> T: ...
 
 
-def _data_url(png: bytes) -> str:
-    return f"data:image/png;base64,{base64.standard_b64encode(png).decode('ascii')}"
+def _data_url(raw: bytes) -> str:
+    media_type = sniff_media_type(raw) or "image/png"
+    return f"data:{media_type};base64,{base64.standard_b64encode(raw).decode('ascii')}"
 
 
 def json_schema(text_format: type[BaseModel]) -> dict[str, Any]:
@@ -61,10 +62,13 @@ def _validate[T: BaseModel](text_format: type[T], output: str) -> T:
 
 class OpenAiClient:
     def __init__(self, *, api_key: str, model: str, timeout: float) -> None:
-        self._model = model
-        self._client = OpenAI(api_key=api_key, timeout=timeout)
+        # Workers 번들에는 openai 패키지가 없어서 쓸 때만 불러온다
+        from openai import AsyncOpenAI
 
-    def parse[T: BaseModel](
+        self._model = model
+        self._client = AsyncOpenAI(api_key=api_key, timeout=timeout)
+
+    async def parse[T: BaseModel](
         self,
         *,
         instructions: str,
@@ -72,12 +76,14 @@ class OpenAiClient:
         images: Sequence[bytes] = (),
         text_format: type[T],
     ) -> T:
+        from openai import APIError, RateLimitError
+
         content: list[dict[str, str]] = [{"type": "input_text", "text": text}]
         content.extend(
-            {"type": "input_image", "image_url": _data_url(png), "detail": "high"} for png in images
+            {"type": "input_image", "image_url": _data_url(raw), "detail": "high"} for raw in images
         )
         try:
-            response = self._client.responses.parse(
+            response = await self._client.responses.parse(
                 model=self._model,
                 instructions=instructions,
                 input=[{"role": "user", "content": content}],  # type: ignore[list-item, misc]
@@ -107,17 +113,17 @@ class CloudflareClient:
         api_token: str,
         model: str,
         timeout: float,
-        transport: httpx.BaseTransport | None = None,
+        transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self._model = model
-        self._client = httpx.Client(
+        self._client = httpx.AsyncClient(
             base_url=f"{CLOUDFLARE_API}/accounts/{account_id}/ai/v1",
             headers={"Authorization": f"Bearer {api_token}"},
             timeout=timeout,
             transport=transport,
         )
 
-    def parse[T: BaseModel](
+    async def parse[T: BaseModel](
         self,
         *,
         instructions: str,
@@ -127,7 +133,7 @@ class CloudflareClient:
     ) -> T:
         content: list[dict[str, Any]] = [{"type": "text", "text": text}]
         content.extend(
-            {"type": "image_url", "image_url": {"url": _data_url(png)}} for png in images
+            {"type": "image_url", "image_url": {"url": _data_url(raw)}} for raw in images
         )
         payload = {
             "model": self._model,
@@ -142,7 +148,7 @@ class CloudflareClient:
             "temperature": 0,
         }
         try:
-            response = self._client.post("/chat/completions", json=payload)
+            response = await self._client.post("/chat/completions", json=payload)
             if response.status_code == httpx.codes.TOO_MANY_REQUESTS:
                 if _CLOUDFLARE_DAILY_LIMIT_CODE in response.text:
                     raise LlmQuotaExceeded("Workers AI 하루 무료 한도를 다 썼습니다.")
@@ -162,10 +168,10 @@ class CloudflareClient:
 def build_llm(settings: Settings) -> LlmClient:
     match settings.llm_provider:
         case "cloudflare":
-            assert settings.cloudflare_account_id and settings.cloudflare_api_token
+            assert settings.cloudflare_account_id and settings.workers_ai_api_token
             return CloudflareClient(
                 account_id=settings.cloudflare_account_id,
-                api_token=settings.cloudflare_api_token,
+                api_token=settings.workers_ai_api_token,
                 model=settings.llm_model,
                 timeout=settings.llm_timeout_seconds,
             )

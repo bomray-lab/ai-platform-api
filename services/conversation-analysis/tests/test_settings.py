@@ -29,7 +29,7 @@ def _settings(values: dict[str, Any]) -> Settings:
             {
                 "llm_provider": "cloudflare",
                 "cloudflare_account_id": "acc",
-                "cloudflare_api_token": "token",
+                "workers_ai_api_token": "token",
             },
             CloudflareClient,
         ),
@@ -41,7 +41,7 @@ def test_provider_selects_client(values: dict[str, Any], client_type: type) -> N
 
 
 def test_default_provider_is_cloudflare() -> None:
-    settings = _settings({"cloudflare_account_id": "acc", "cloudflare_api_token": "token"})
+    settings = _settings({"cloudflare_account_id": "acc", "workers_ai_api_token": "token"})
 
     assert settings.llm_provider == "cloudflare"
 
@@ -50,7 +50,7 @@ def test_default_provider_is_cloudflare() -> None:
     "values, missing",
     [
         ({}, "CLOUDFLARE_ACCOUNT_ID"),
-        ({"llm_provider": "cloudflare", "cloudflare_account_id": "acc"}, "CLOUDFLARE_API_TOKEN"),
+        ({"llm_provider": "cloudflare", "cloudflare_account_id": "acc"}, "WORKERS_AI_API_TOKEN"),
         ({"llm_provider": "openai"}, "OPENAI_API_KEY"),
     ],
 )

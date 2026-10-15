@@ -1,6 +1,7 @@
+import asyncio
 from datetime import date
 
-from app.api.rate_limit import DailyLimiter
+from app.api.rate_limit import MemoryDailyLimiter
 
 
 class _Clock:
@@ -12,17 +13,17 @@ class _Clock:
 
 
 def test_counts_each_key_separately() -> None:
-    limiter = DailyLimiter(2, today=_Clock())
+    limiter = MemoryDailyLimiter(2, today=_Clock())
 
-    assert [limiter.try_hit("a") for _ in range(3)] == [True, True, False]
-    assert limiter.try_hit("b") is True
+    assert [asyncio.run(limiter.try_hit("a")) for _ in range(3)] == [True, True, False]
+    assert asyncio.run(limiter.try_hit("b")) is True
 
 
 def test_resets_when_day_changes() -> None:
     clock = _Clock()
-    limiter = DailyLimiter(1, today=clock)
-    limiter.try_hit("a")
+    limiter = MemoryDailyLimiter(1, today=clock)
+    asyncio.run(limiter.try_hit("a"))
 
     clock.today = date(2026, 10, 15)
 
-    assert limiter.try_hit("a") is True
+    assert asyncio.run(limiter.try_hit("a")) is True

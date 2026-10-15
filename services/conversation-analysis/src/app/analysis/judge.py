@@ -75,9 +75,9 @@ dominance: 대화 주도권을 누가 가졌는지
 """
 
 
-def judge(my_dna_type: DnaType, turns: list[TranscriptTurn], llm: LlmClient) -> Judgment:
+async def judge(my_dna_type: DnaType, turns: list[TranscriptTurn], llm: LlmClient) -> Judgment:
     transcript = json.dumps([turn.model_dump() for turn in turns], ensure_ascii=False)
-    judgment = llm.parse(
+    judgment = await llm.parse(
         instructions=_INSTRUCTIONS,
         text=f"<my_dna_type>{my_dna_type}</my_dna_type>\n<transcript>\n{transcript}\n</transcript>",
         text_format=Judgment,

@@ -11,6 +11,7 @@
 
 - 저장소 하나에 `services/<서비스명>/`으로 서비스를 모은다.
 - 서비스마다 `pyproject.toml`, `Dockerfile`, `README.md`, `tests/`를 따로 두고 혼자 실행·배포된다.
+- 공개 주소는 `api.bomraylab.com` 하나다. 서비스마다 `/v1/<리소스>/` 경로를 맡고(health, 문서 포함) Worker Routes로 나눈다.
 - 서비스끼리는 서로 import하지 않는다. 다른 서비스 기능이 필요해지면 HTTP로 호출한다.
 - 둘 이상의 서비스가 같은 코드를 쓰게 되면 그때 공통 패키지로 뺀다. 미리 만들지 않는다.
 - 서비스 안에서는 `api`(요청·응답)와 `analysis` 같은 도메인 패키지를 나누고, 의존은 `api` → 도메인 방향으로만 둔다.
@@ -20,7 +21,9 @@
 - LLM 호출은 서비스마다 `llm.py` 한 곳에 모은다. `LLM_PROVIDER`와 모델명은 `.env`로만 바꾼다.
   - `cloudflare`: Workers AI. 하루 무료 한도 안에서 쓴다. 기본값
   - `openai`: 유료. 실제 서비스에 쓰려면 개인 계정 키를 넣는다
-- API 서버는 Docker로 띄우고, Cloudflare에는 모델 호출만 맡긴다.
+- 무료로 운영한다. API 서버는 Cloudflare Python Workers 무료 플랜에 올리고, 같은 앱을 Docker로도 띄울 수 있게 둔다.
+  - Workers에서 돌지 않는 패키지(네이티브 확장, 스레드)는 `dependencies`에 넣지 않고 `server` extra에 둔다.
+  - 요청 하나의 CPU가 10ms 안에 끝나도록 무거운 일(이미지 축소 등)은 프론트에 맡긴다.
 - 공개 API는 토큰 인증, CORS, IP별 하루 호출 수로 무료 한도를 지킨다. 실패는 `{"error", "message"}` 형식으로 돌려준다.
 - 사용자가 올린 데이터는 저장하지 않는다. DB, 회원, 결제는 필요해질 때 넣는다.
 - 테스트는 LLM을 mock으로 대신한다.

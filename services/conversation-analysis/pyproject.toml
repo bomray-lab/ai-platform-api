@@ -2,27 +2,39 @@
 name = "conversation-analysis"
 version = "0.1.0"
 requires-python = ">=3.13"
+# Cloudflare Workers(Pyodide)에 같이 올라가는 패키지. 네이티브 확장이 필요한 패키지는 넣지 않는다
 dependencies = [
-    "fastapi[standard]>=0.128.8",
+    "fastapi>=0.128.8",
     "httpx>=0.28.1",
-    "openai>=3.29.0",
-    "pillow>=12.3.0",
     "pydantic-settings>=2.15.0",
+    "python-multipart>=0.0.32",
+]
+
+[project.optional-dependencies]
+# Workers 밖(Docker, 일반 서버)에서만 쓴다
+server = [
+    "openai>=3.29.0",
+    "uvicorn[standard]>=0.54.0",
 ]
 
 [dependency-groups]
 dev = [
+    "fastapi[standard]>=0.128.8",
     "mypy>=2.4.0",
+    "openai>=3.29.0",
     "pytest>=9.1.1",
     "ruff>=0.17.0",
+    "workers-py>=1.17.7",
+    "workers-runtime-sdk>=1.9.3",
 ]
 
 [tool.pytest.ini_options]
-pythonpath = ["."]
+pythonpath = ["src", "."]
 testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
+src = ["src", "."]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM"]
@@ -32,3 +44,4 @@ ignore = ["E501"]
 plugins = ["pydantic.mypy"]
 ignore_missing_imports = true
 explicit_package_bases = true
+mypy_path = "src"

@@ -5,7 +5,7 @@ from typing import Literal, Self
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-_SERVICE_ROOT = Path(__file__).resolve().parent.parent
+_SERVICE_ROOT = Path(__file__).resolve().parents[2]
 
 _ENV = SettingsConfigDict(
     env_file=_SERVICE_ROOT / ".env",
@@ -14,7 +14,7 @@ _ENV = SettingsConfigDict(
 )
 
 _REQUIRED_BY_PROVIDER = {
-    "cloudflare": ("cloudflare_account_id", "cloudflare_api_token"),
+    "cloudflare": ("cloudflare_account_id", "workers_ai_api_token"),
     "openai": ("openai_api_key",),
 }
 
@@ -25,6 +25,8 @@ class ApiSettings(BaseSettings):
     api_token: SecretStr | None = Field(default=None, min_length=32)
     cors_origins: list[str] = ["https://lovedna.bomraylab.com"]
     daily_limit_per_ip: int = Field(default=10, ge=1)
+    # 프록시가 넣어 주는 실제 사용자 IP 헤더. 그 프록시를 거쳐야만 닿는 서버에서만 설정한다
+    client_ip_header: str | None = None
 
     model_config = _ENV
 
@@ -35,7 +37,7 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = 300
 
     cloudflare_account_id: str | None = None
-    cloudflare_api_token: str | None = None
+    workers_ai_api_token: str | None = None
     openai_api_key: str | None = None
 
     model_config = _ENV

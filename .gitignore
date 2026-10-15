@@ -3,3 +3,10 @@
 __pycache__/
 .pytest_cache/
 *.pyc
+
+# Cloudflare Python Workers
+python_modules/
+.venv-workers/
+.wrangler/
+.dev.vars
+pylock.toml
