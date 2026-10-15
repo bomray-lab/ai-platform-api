@@ -1,6 +1,6 @@
 # ai-platform-api
 
-새 채팅에서 이 파일부터 읽는다. 세부 사항은 각 서비스의 README와 코드를 본다.
+이 프로젝트의 공통 규칙이다. 세부 사항은 각 서비스의 README와 코드를 본다.
 
 ## 목적
 
@@ -29,4 +29,4 @@
 
 | 서비스 | 상태 | 내용 |
 | --- | --- | --- |
-| `conversation-analysis` | 1차 완료 | [연애DNA](https://lovedna.bomraylab.com/)에 붙인 대화 캡처 분석. 지금 응답 스키마가 최종이다. |
+| `conversation-analysis` | 1차 완료, 단독 배포·테스트 중 (연애DNA 연동 전) | [연애DNA](https://lovedna.bomraylab.com/)에 붙이려고 만든 대화 캡처 분석. 지금 응답 스키마가 최종이다. 연동하면 README 문구 수정.|
