@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 from collections.abc import Callable
@@ -51,8 +52,10 @@ def test_cloudflare_calls_account_endpoint_with_token_and_images() -> None:
         seen["body"] = json.loads(request.content)
         return _reply(_JUDGMENT_JSON)
 
-    result = _cloudflare(handler).parse(
-        instructions="지시", text="본문", images=[b"png-bytes"], text_format=Judgment
+    result = asyncio.run(
+        _cloudflare(handler).parse(
+            instructions="지시", text="본문", images=[b"png-bytes"], text_format=Judgment
+        )
     )
 
     assert result == Judgment.model_validate(judgment_payload())
@@ -73,6 +76,24 @@ def test_cloudflare_calls_account_endpoint_with_token_and_images() -> None:
     ]
 
 
+def test_cloudflare_keeps_uploaded_image_media_type() -> None:
+    seen: dict = {}
+    jpeg = b"\xff\xd8\xff" + b"jpeg-bytes"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.update(json.loads(request.content))
+        return _reply(_JUDGMENT_JSON)
+
+    asyncio.run(
+        _cloudflare(handler).parse(
+            instructions="지시", text="본문", images=[jpeg], text_format=Judgment
+        )
+    )
+
+    image_url = seen["messages"][1]["content"][1]["image_url"]["url"]
+    assert image_url.startswith("data:image/jpeg;base64,")
+
+
 def test_cloudflare_sends_only_text_when_no_images() -> None:
     seen: dict = {}
 
@@ -80,7 +101,7 @@ def test_cloudflare_sends_only_text_when_no_images() -> None:
         seen.update(json.loads(request.content))
         return _reply(_JUDGMENT_JSON)
 
-    _cloudflare(handler).parse(instructions="지시", text="본문", text_format=Judgment)
+    asyncio.run(_cloudflare(handler).parse(instructions="지시", text="본문", text_format=Judgment))
 
     assert seen["messages"][1]["content"] == [{"type": "text", "text": "본문"}]
 
@@ -88,7 +109,7 @@ def test_cloudflare_sends_only_text_when_no_images() -> None:
 def test_cloudflare_accepts_json_in_code_fence() -> None:
     client = _cloudflare(lambda request: _reply(f"```json\n{_JUDGMENT_JSON}\n```"))
 
-    result = client.parse(instructions="지시", text="본문", text_format=Judgment)
+    result = asyncio.run(client.parse(instructions="지시", text="본문", text_format=Judgment))
 
     assert result == Judgment.model_validate(judgment_payload())
 
@@ -104,14 +125,14 @@ def test_schema_mismatch_is_rejected(reply: httpx.Response) -> None:
     client = _cloudflare(lambda request: reply)
 
     with pytest.raises(LlmRejected):
-        client.parse(instructions="지시", text="본문", text_format=Judgment)
+        asyncio.run(client.parse(instructions="지시", text="본문", text_format=Judgment))
 
 
 def test_http_error_is_llm_failure() -> None:
     client = _cloudflare(lambda request: httpx.Response(404, json={"error": "not found"}))
 
     with pytest.raises(LlmFailed) as caught:
-        client.parse(instructions="지시", text="본문", text_format=Judgment)
+        asyncio.run(client.parse(instructions="지시", text="본문", text_format=Judgment))
     assert type(caught.value) is LlmFailed
 
 
@@ -134,5 +155,5 @@ def test_cloudflare_429_distinguishes_daily_limit_from_busy(
     client = _cloudflare(lambda request: reply)
 
     with pytest.raises(LlmFailed) as caught:
-        client.parse(instructions="지시", text="본문", text_format=Judgment)
+        asyncio.run(client.parse(instructions="지시", text="본문", text_format=Judgment))
     assert type(caught.value) is expected

@@ -1,0 +1,28 @@
+// Cloudflare Python Workers 배포 설정 (무료 플랜). 키는 `uv run pywrangler secret put`으로 넣는다
+{
+	"$schema": "https://unpkg.com/wrangler/config-schema.json",
+	"name": "conversation-analysis",
+	"main": "src/worker.py",
+	"compatibility_date": "2026-10-15",
+	"compatibility_flags": ["python_workers"],
+	"observability": { "enabled": true },
+	// api.bomraylab.com을 서비스들이 경로로 나눠 쓴다. 이 Worker는 /v1/conversations/ 아래만 받는다
+	"routes": [{ "pattern": "api.bomraylab.com/v1/conversations/*", "zone_name": "bomraylab.com" }],
+	// 커스텀 도메인 DNS를 붙이기 전 테스트용 주소
+	"workers_dev": true,
+	"durable_objects": {
+		"bindings": [{ "name": "DAILY_COUNTER", "class_name": "DailyCounter" }]
+	},
+	"exports": {
+		"DailyCounter": { "type": "durable-object", "storage": "sqlite" }
+	},
+	"vars": {
+		"LLM_PROVIDER": "cloudflare",
+		"LLM_MODEL": "@cf/google/gemma-4-26b-a4b-it",
+		"LLM_TIMEOUT_SECONDS": "300",
+		"CORS_ORIGINS": "[\"https://lovedna.bomraylab.com\"]",
+		"DAILY_LIMIT_PER_IP": "10",
+		// Workers 앞에서 Cloudflare가 직접 채우는 헤더라 사용자가 바꿀 수 없다
+		"CLIENT_IP_HEADER": "CF-Connecting-IP"
+	}
+}

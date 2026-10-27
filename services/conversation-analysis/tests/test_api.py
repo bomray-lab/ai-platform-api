@@ -1,16 +1,14 @@
 from collections.abc import Iterator
-from io import BytesIO
 
 import pytest
 from fastapi.testclient import TestClient
-from PIL import Image
 from pydantic import SecretStr
 
 from app.analysis.errors import LlmBusy, LlmFailed, LlmQuotaExceeded
 from app.analysis.llm import llm_from_settings
 from app.analysis.models import Extraction, Judgment
-from app.api.images import MAX_IMAGES
-from app.api.rate_limit import DailyLimiter, limiter_from_settings
+from app.api.images import MAX_IMAGE_BYTES, MAX_IMAGES
+from app.api.rate_limit import MemoryDailyLimiter, limiter_from_settings
 from app.main import app
 from app.settings import ApiSettings, get_api_settings
 from tests.fakes import FakeLlm, fixture_turns, judgment
@@ -18,10 +16,8 @@ from tests.fakes import FakeLlm, fixture_turns, judgment
 _TOKEN = "t" * 32
 
 
-def _png(width: int = 40, height: int = 20) -> bytes:
-    buffer = BytesIO()
-    Image.new("RGB", (width, height), "white").save(buffer, format="PNG")
-    return buffer.getvalue()
+def _png(body: bytes = b"") -> bytes:
+    return b"\x89PNG\r\n\x1a\n" + body
 
 
 @pytest.fixture
@@ -32,8 +28,10 @@ def client() -> Iterator[TestClient]:
     app.dependency_overrides.clear()
 
 
-def _api_token(token: str | None) -> None:
-    settings = ApiSettings.model_construct(api_token=SecretStr(token) if token else None)
+def _api_token(token: str | None, client_ip_header: str | None = None) -> None:
+    settings = ApiSettings.model_construct(
+        api_token=SecretStr(token) if token else None, client_ip_header=client_ip_header
+    )
     app.dependency_overrides[get_api_settings] = lambda: settings
 
 
@@ -43,7 +41,7 @@ def _use(llm: FakeLlm) -> FakeLlm:
 
 
 def _limit(per_day: int) -> None:
-    limiter = DailyLimiter(per_day)
+    limiter = MemoryDailyLimiter(per_day)
     app.dependency_overrides[limiter_from_settings] = lambda: limiter
 
 
@@ -58,12 +56,13 @@ def _post(
     *images: bytes,
     my_dna_type: str = "카톡 폭탄러",
     token: str | None = _TOKEN,
+    headers: dict[str, str] | None = None,
 ):
     return client.post(
         "/v1/conversations/analyze",
         data={"my_dna_type": my_dna_type},
         files=[("images", (f"{i}.png", raw, "image/png")) for i, raw in enumerate(images)],
-        headers={"Authorization": f"Bearer {token}"} if token else {},
+        headers=({"Authorization": f"Bearer {token}"} if token else {}) | (headers or {}),
     )
 
 
@@ -80,13 +79,14 @@ def test_analyze_returns_transcript_and_judgment(client: TestClient) -> None:
     assert body["temperature"] == "cooling"
 
 
-def test_analyze_resizes_long_side_before_sending(client: TestClient) -> None:
-    llm = _use(_readable_llm())
+def test_rejects_image_over_size_limit_without_calling_model(client: TestClient) -> None:
+    llm = _use(FakeLlm({}))
 
-    _post(client, _png(2560, 400))
+    response = _post(client, _png(b"0" * MAX_IMAGE_BYTES))
 
-    with Image.open(BytesIO(llm.calls[0].images[0])) as sent:
-        assert sent.size == (1280, 200)
+    assert response.status_code == 422
+    assert response.json()["error"] == "invalid_image"
+    assert llm.calls == []
 
 
 def test_unreadable_capture_returns_read_failed_without_judging(client: TestClient) -> None:
@@ -101,13 +101,12 @@ def test_unreadable_capture_returns_read_failed_without_judging(client: TestClie
 
 def test_accepts_up_to_max_images_in_upload_order(client: TestClient) -> None:
     llm = _use(_readable_llm())
-    widths = [40 + i for i in range(MAX_IMAGES)]
+    images = [_png(str(i).encode()) for i in range(MAX_IMAGES)]
 
-    response = _post(client, *[_png(width) for width in widths])
+    response = _post(client, *images)
 
     assert response.status_code == 200
-    sent = llm.calls[0].images
-    assert [Image.open(BytesIO(png)).width for png in sent] == widths
+    assert llm.calls[0].images == images
 
 
 @pytest.mark.parametrize("count", [0, MAX_IMAGES + 1])
@@ -148,6 +147,27 @@ def test_daily_limit_blocks_before_calling_model(client: TestClient) -> None:
     assert [response.status_code for response in responses] == [200, 200, 429]
     assert responses[-1].json()["error"] == "daily_limit_exceeded"
     assert len(llm.calls) == 4
+
+
+def test_daily_limit_counts_by_client_ip_header_when_configured(client: TestClient) -> None:
+    _api_token(_TOKEN, client_ip_header="CF-Connecting-IP")
+    _limit(1)
+    _use(_readable_llm())
+
+    def post_from(ip: str):
+        return _post(client, _png(), headers={"CF-Connecting-IP": ip})
+
+    assert post_from("203.0.113.1").status_code == 200
+    assert post_from("203.0.113.2").status_code == 200
+    assert post_from("203.0.113.1").status_code == 429
+
+
+def test_daily_limit_ignores_client_ip_header_when_not_configured(client: TestClient) -> None:
+    _limit(1)
+    _use(_readable_llm())
+
+    assert _post(client, _png(), headers={"CF-Connecting-IP": "203.0.113.1"}).status_code == 200
+    assert _post(client, _png(), headers={"CF-Connecting-IP": "203.0.113.2"}).status_code == 429
 
 
 def test_invalid_upload_does_not_use_daily_limit(client: TestClient) -> None:
@@ -203,7 +223,13 @@ def test_fails_closed_when_server_has_no_token(client: TestClient) -> None:
 
 
 def test_health_needs_no_token(client: TestClient) -> None:
-    assert client.get("/health").status_code == 200
+    assert client.get("/v1/conversations/health").status_code == 200
+
+
+def test_docs_live_under_service_prefix(client: TestClient) -> None:
+    assert client.get("/v1/conversations/docs").status_code == 200
+    assert client.get("/v1/conversations/openapi.json").status_code == 200
+    assert client.get("/docs").status_code == 404
 
 
 @pytest.mark.parametrize(

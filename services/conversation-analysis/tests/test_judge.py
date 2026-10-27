@@ -1,3 +1,4 @@
+import asyncio
 import json
 from typing import get_args
 
@@ -16,7 +17,7 @@ def test_dna_type_table_covers_every_type() -> None:
 def test_judge_returns_model_judgment() -> None:
     llm = FakeLlm({Judgment: judgment()})
 
-    result = judge("카톡 폭탄러", fixture_turns(), llm)
+    result = asyncio.run(judge("카톡 폭탄러", fixture_turns(), llm))
 
     assert result == judgment()
 
@@ -25,7 +26,7 @@ def test_judge_sends_my_type_and_transcript_without_images() -> None:
     turns = fixture_turns()
     llm = FakeLlm({Judgment: judgment()})
 
-    judge("카톡 폭탄러", turns, llm)
+    asyncio.run(judge("카톡 폭탄러", turns, llm))
 
     [call] = llm.calls
     assert call.text_format is Judgment
@@ -38,7 +39,7 @@ def test_judge_drops_evidence_not_in_transcript() -> None:
     evidence = ["“글쎄 그때 연락할게”", "보고 싶어", "다음에  보자"]
     llm = FakeLlm({Judgment: judgment(evidence=evidence)})
 
-    result = judge("잠수 장인", fixture_turns(), llm)
+    result = asyncio.run(judge("잠수 장인", fixture_turns(), llm))
 
     assert result.evidence == ["“글쎄 그때 연락할게”", "다음에  보자"]
 

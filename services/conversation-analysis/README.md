@@ -4,14 +4,17 @@
 
 지금은 연애DNA에 연결하기 전이고, 단독으로 배포해 테스트하고 있다. 입력은 연애유형과 캡처뿐이라 다른 서비스에도 붙일 수 있다.
 
+[Cloudflare Python Workers](https://developers.cloudflare.com/workers/languages/python/) 무료 플랜에서 돌린다. 같은 FastAPI 앱을 uvicorn이나 Docker로도 띄울 수 있다.
+
 ## 동작 방식
 
-1. **검사** (`app/api`): API 토큰, 이미지 개수·형식·크기, IP별 하루 호출 수를 차례로 확인한다. 여기서 걸리면 모델을 부르지 않는다.
-2. **이미지 정리** (`resize.py`): 사진 회전을 바로잡고 긴 변을 1280px 이하로 줄여 PNG로 바꾼다.
-3. **대본 추출** (`extract.py`): 모델이 캡처에서 말풍선을 읽어 누가 한 말인지(`me`, `other`, `unknown`)와 함께 대본으로 만든다. 글자를 읽지 못하면 다음 단계로 가지 않고 `read_failed`를 돌려준다.
-4. **판정** (`judge.py`): 내 연애유형과 대본만 보고 관심도, 어장 여부, 주도권, 추천 답장을 정한다. 모델이 낸 근거 인용 중 대본에 실제로 없는 문장은 버린다.
+1. **검사** (`src/app/api`): API 토큰, 이미지 개수·형식·크기, IP별 하루 호출 수를 차례로 확인한다. 여기서 걸리면 모델을 부르지 않는다.
+2. **대본 추출** (`extract.py`): 모델이 캡처에서 말풍선을 읽어 누가 한 말인지(`me`, `other`, `unknown`)와 함께 대본으로 만든다. 글자를 읽지 못하면 다음 단계로 가지 않고 `read_failed`를 돌려준다.
+3. **판정** (`judge.py`): 내 연애유형과 대본만 보고 관심도, 어장 여부, 주도권, 추천 답장을 정한다. 모델이 낸 근거 인용 중 대본에 실제로 없는 문장은 버린다.
 
-모델 응답은 단계마다 Pydantic 스키마로 검사한다. 모델 호출은 동기 방식이라 `asyncio.to_thread`로 돌려서 요청을 처리하는 이벤트 루프를 막지 않는다.
+모델 응답은 단계마다 Pydantic 스키마로 검사한다. Workers에는 스레드가 없어서 모델 호출은 모두 `async`로 한다.
+
+서버는 이미지를 줄이지 않는다. Workers 무료 플랜은 요청 하나에 CPU를 10ms까지만 쓸 수 있어서, 캡처는 프론트에서 줄여 보낸다. 긴 변을 1280px 정도로 줄이고 jpeg나 webp로 바꾸면 한 장이 1MB를 넘지 않는다.
 
 ## 실행
 
@@ -23,17 +26,19 @@ cp .env.example .env
 
 ```bash
 uv sync
-uv run fastapi dev
+uv run fastapi dev src/app/main.py
 ```
 
-`GET /health`는 `{"status":"ok"}`를 반환한다. API 문서는 `http://127.0.0.1:8000/docs`에서 볼 수 있다.
+`GET /v1/conversations/health`는 `{"status":"ok"}`를 반환한다. API 문서는 `http://127.0.0.1:8000/v1/conversations/docs`에서 볼 수 있다.
+
+`api.bomraylab.com` 하나를 여러 서비스가 경로로 나눠 쓰므로, 이 서비스의 경로는 health와 문서까지 모두 `/v1/conversations/` 아래에 둔다.
 
 ## 요청
 
 `POST /v1/conversations/analyze`
 
 - `my_dna_type`: `카톡 폭탄러`, `연애 고수`, `잠수 장인`, `선긋기 장인`, `자유 영혼`, `걱정 마라토너`, `밀당 고수`, `밀당 유목민`
-- `images`: jpeg, png, webp. 1장 이상 3장 이하, 한 장 8MB 이하
+- `images`: jpeg, png, webp. 1장 이상 3장 이하, 한 장 1MB 이하
 
 ```bash
 curl -s -X POST http://127.0.0.1:8000/v1/conversations/analyze \
@@ -42,7 +47,7 @@ curl -s -X POST http://127.0.0.1:8000/v1/conversations/analyze \
   -F "images=@chat.png"
 ```
 
-`Authorization: Bearer <API_TOKEN>` 헤더가 없거나 틀리면 `401`을 반환한다. Swagger(`/docs`)에서는 오른쪽 위 **Authorize**에 토큰을 넣는다. `GET /health`는 토큰 없이 호출할 수 있다.
+`Authorization: Bearer <API_TOKEN>` 헤더가 없거나 틀리면 `401`을 반환한다. Swagger(`/v1/conversations/docs`)에서는 오른쪽 위 **Authorize**에 토큰을 넣는다. `GET /v1/conversations/health`는 토큰 없이 호출할 수 있다.
 
 여러 장은 `-F "images=@다른장.png"`를 업로드 순서대로 반복한다.
 
@@ -86,16 +91,18 @@ curl -s -X POST http://127.0.0.1:8000/v1/conversations/analyze \
 - **CORS**: 브라우저에서는 `CORS_ORIGINS`에 있는 사이트에서만 호출할 수 있다. 기본값은 연애DNA 주소 하나다. 로컬에서 프론트를 띄워 개발할 때는 `CORS_ORIGINS=["https://lovedna.bomraylab.com","http://localhost:5173"]`처럼 그 주소를 추가한다.
 - **IP별 하루 호출 수**: `DAILY_LIMIT_PER_IP`(기본 10)를 넘으면 모델을 부르지 않고 `429`를 반환한다. 날짜는 UTC 기준으로 바뀐다.
 
-호출 횟수는 메모리에 세므로 서버를 다시 띄우면 초기화되고, 프로세스를 여러 개 띄우면 각자 따로 센다. 프록시나 로드밸런서 뒤에 두면 실제 사용자 IP를 읽도록 `FORWARDED_ALLOW_IPS` 환경 변수에 프록시 IP를 넣는다(uvicorn 설정).
+Workers에서는 IP마다 Durable Object 하나에 오늘 날짜와 횟수를 저장한다(`src/worker.py`). uvicorn이나 Docker로 띄우면 메모리에 세므로 서버를 다시 띄우면 초기화되고, 프로세스를 여러 개 띄우면 각자 따로 센다.
+
+프록시 뒤에 두면 모든 요청이 프록시 IP로 보이므로 `CLIENT_IP_HEADER`에 프록시가 넣어 주는 사용자 IP 헤더를 적는다. 이 헤더는 누구나 지어 보낼 수 있으니, 그 프록시를 거쳐야만 서버에 닿을 때만 설정한다. Workers는 Cloudflare가 직접 채우는 `CF-Connecting-IP`를 쓴다(`wrangler.jsonc`).
 
 ## 모델 교체
 
-키와 모델명은 코드에 없고 `.env`로만 바꾼다. 모델 호출은 `app/analysis/llm.py` 한 곳에서 한다.
+키와 모델명은 코드에 없고 `.env`(Workers는 `wrangler.jsonc`의 `vars`와 시크릿)로만 바꾼다. 모델 호출은 `src/app/analysis/llm.py` 한 곳에서 한다.
 
 | `LLM_PROVIDER` | 필요한 값 | 비용 |
 | --- | --- | --- |
-| `cloudflare` | `LLM_MODEL`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` | 하루 10,000 뉴런까지 무료. [Workers AI](https://developers.cloudflare.com/workers-ai/) |
-| `openai` | `LLM_MODEL`, `OPENAI_API_KEY` | 유료 |
+| `cloudflare` | `LLM_MODEL`, `CLOUDFLARE_ACCOUNT_ID`, `WORKERS_AI_API_TOKEN` | 하루 10,000 뉴런까지 무료. [Workers AI](https://developers.cloudflare.com/workers-ai/) |
+| `openai` | `LLM_MODEL`, `OPENAI_API_KEY` | 유료. `openai` 패키지가 Workers에서 돌지 않아 uvicorn·Docker에서만 쓴다 |
 
 캡처를 읽어야 하므로 이미지를 지원하는 모델을 써야 한다. 기본값은 Workers AI의 `@cf/google/gemma-4-26b-a4b-it`이다.
 
@@ -104,6 +111,27 @@ Cloudflare API 토큰은 대시보드의 **My Profile → API Tokens**에서 `Wo
 ## 데이터 보관
 
 캡처와 대본은 디스크나 데이터베이스에 남기지 않는다. 회원, 로그인, 결제도 없다. 캡처는 분석을 위해 고른 모델 제공사(Cloudflare 또는 OpenAI) 서버로 보낸다. `openai`를 쓸 때는 OpenAI의 응답 보관 기능(`store`)을 끈다.
+
+## Cloudflare Workers 배포
+
+`uv run pywrangler`가 `pyproject.toml`의 `dependencies`만 묶어 `src/`와 함께 올린다. `openai`, `uvicorn`처럼 Workers에서 돌지 않는 패키지는 `server` extra에 둔다.
+
+```bash
+uv run pywrangler login
+uv run pywrangler secret put API_TOKEN
+uv run pywrangler secret put CLOUDFLARE_ACCOUNT_ID
+uv run pywrangler secret put WORKERS_AI_API_TOKEN
+uv run pywrangler deploy
+```
+
+키가 아닌 설정(`LLM_MODEL`, `CORS_ORIGINS`, `DAILY_LIMIT_PER_IP` 등)은 `wrangler.jsonc`의 `vars`에 있다.
+
+배포하면 두 주소로 열린다.
+
+- `https://api.bomraylab.com/v1/conversations/...`: `wrangler.jsonc`의 `routes`로 이 경로만 이 Worker가 받는다. 처음 한 번 Cloudflare 대시보드의 `bomraylab.com` **DNS**에 `api` 레코드(타입 `AAAA`, 값 `100::`, 프록시 켬)를 추가해야 열린다.
+- `https://conversation-analysis.<계정 서브도메인>.workers.dev/v1/conversations/...`: DNS 없이 바로 쓰는 테스트용 주소
+
+로컬에서 Workers 런타임으로 띄우려면 `uv run pywrangler dev`를 실행한다. `.env`를 읽고 `http://127.0.0.1:8787`에서 열린다.
 
 ## Docker
 
@@ -120,7 +148,7 @@ LLM은 mock으로 대신하므로 키나 모델 없이 돌아간다.
 
 ```bash
 uv run pytest
-uv run ruff check app tests
-uv run ruff format --check app tests
-uv run mypy app tests
+uv run ruff check src tests
+uv run ruff format --check src tests
+uv run mypy src tests
 ```

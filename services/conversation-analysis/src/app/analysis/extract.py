@@ -1,7 +1,6 @@
 from app.analysis.errors import LlmRejected, UnreadableCapture
 from app.analysis.llm import LlmClient
 from app.analysis.models import Extraction, TranscriptTurn
-from app.analysis.resize import resize_long_side
 
 _INSTRUCTIONS = """\
 카카오톡·인스타그램 등 대화 캡처에서 말만 추출한다.
@@ -12,12 +11,12 @@ speaker는 me(오른쪽·내 말풍선), other(왼쪽·상대 말풍선), 위치
 """
 
 
-def extract_transcript(images: list[bytes], llm: LlmClient) -> list[TranscriptTurn]:
+async def extract_transcript(images: list[bytes], llm: LlmClient) -> list[TranscriptTurn]:
     try:
-        parsed = llm.parse(
+        parsed = await llm.parse(
             instructions=_INSTRUCTIONS,
             text="이 캡처들의 대화를 순서대로 추출한다.",
-            images=[resize_long_side(raw) for raw in images],
+            images=images,
             text_format=Extraction,
         )
     except LlmRejected as error:

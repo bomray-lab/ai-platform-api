@@ -17,9 +17,9 @@ LLM을 활용한 API를 서비스 단위로 모아 둔 저장소다. 서비스�
 | Pydantic / pydantic-settings | 2.x | 요청·응답 검증, LLM 출력 스키마, `.env` 설정 |
 | uv | 0.13 | 패키지·가상환경 관리 |
 | httpx, openai | | Cloudflare Workers AI, OpenAI 호출 |
-| Pillow | 12.x | 업로드 이미지 축소·변환 |
 | pytest, mypy, ruff | | 테스트, 타입 검사, 린트·포맷 |
-| Docker | | 서비스별 이미지 |
+| Cloudflare Python Workers, pywrangler | | 배포(무료 플랜). 하루 호출 수는 Durable Objects에 저장 |
+| Docker | | Workers 밖에서 띄울 때 쓰는 서비스별 이미지 |
 
 ## 설계에서 신경 쓴 점
 
@@ -40,35 +40,40 @@ cd ai-platform-api/services/conversation-analysis
 
 cp .env.example .env   # 모델 키와 API_TOKEN을 채운다
 uv sync
-uv run fastapi dev     # http://127.0.0.1:8000/docs
+uv run fastapi dev src/app/main.py   # http://127.0.0.1:8000/v1/conversations/docs
 ```
 
 | 명령어 | 설명 |
 | --- | --- |
-| `uv run fastapi dev` | 개발 서버 실행 |
+| `uv run fastapi dev src/app/main.py` | 개발 서버 실행 |
+| `uv run pywrangler dev` | Workers 런타임으로 로컬 실행 |
 | `uv run pytest` | 테스트 (키 없이 실행) |
-| `uv run ruff check app tests` | 린트 |
-| `uv run ruff format --check app tests` | 포맷 검사 |
-| `uv run mypy app tests` | 타입 검사 |
+| `uv run ruff check src tests` | 린트 |
+| `uv run ruff format --check src tests` | 포맷 검사 |
+| `uv run mypy src tests` | 타입 검사 |
 
-`.env` 항목, 요청·응답, Docker 실행은 각 서비스 README를 본다.
+`.env` 항목, 요청·응답, 배포는 각 서비스 README를 본다.
 
 ## 구조
 
 ```text
 services/
   <서비스명>/
-    app/
-      api/        요청·응답, 인증, 호출 제한
-      <도메인>/    서비스 로직과 LLM 호출 (예: analysis/)
-      main.py
-      settings.py
-    tests/        LLM mock 테스트
+    src/
+      app/
+        api/        요청·응답, 인증, 호출 제한
+        <도메인>/    서비스 로직과 LLM 호출 (예: analysis/)
+        main.py
+        settings.py
+      worker.py     Cloudflare Workers 진입점
+    tests/          LLM mock 테스트
+    wrangler.jsonc  Workers 배포 설정
     Dockerfile
     pyproject.toml
     README.md
 ```
 
+- 모든 서비스는 `https://api.bomraylab.com` 하나를 경로로 나눠 쓴다. 서비스마다 `/v1/<리소스>/` 경로를 하나 맡고, health와 API 문서도 그 아래에 둔다(예: `/v1/conversations/health`). 경로는 각 서비스 `wrangler.jsonc`의 `routes`로 그 서비스 Worker에 연결한다.
 - 서비스끼리는 코드를 공유하지 않는다. 다른 서비스 기능이 필요하면 HTTP로 호출한다.
 - 서비스 안에서는 `api`가 도메인 패키지를 쓰고, 반대 방향으로는 import하지 않는다.
 - 키와 모델명은 서비스별 `.env`에 두고 저장소에는 `.env.example`만 올린다.

@@ -51,7 +51,7 @@ class FakeLlm:
     results: dict[type[BaseModel], BaseModel | Exception]
     calls: list[Call] = field(default_factory=list)
 
-    def parse[T: BaseModel](
+    async def parse[T: BaseModel](
         self,
         *,
         instructions: str,
