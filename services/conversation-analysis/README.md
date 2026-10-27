@@ -126,6 +126,8 @@ uv run pywrangler deploy
 
 키가 아닌 설정(`LLM_MODEL`, `CORS_ORIGINS`, `DAILY_LIMIT_PER_IP` 등)은 `wrangler.jsonc`의 `vars`에 있다.
 
+시크릿은 처음 한 번만 넣으면 된다. 이후 배포는 [GitHub Actions](../../.github/workflows/conversation-analysis.yml)가 한다. 이 폴더가 바뀐 PR에서는 검사만 돌고, `main`에 들어오면 검사 후 배포한다. 저장소 시크릿에 `CLOUDFLARE_API_TOKEN`(Workers 배포 권한)과 `CLOUDFLARE_ACCOUNT_ID`가 있어야 한다.
+
 배포하면 두 주소로 열린다.
 
 - `https://api.bomraylab.com/v1/conversations/...`: `wrangler.jsonc`의 `routes`로 이 경로만 이 Worker가 받는다. 처음 한 번 Cloudflare 대시보드의 `bomraylab.com` **DNS**에 `api` 레코드(타입 `AAAA`, 값 `100::`, 프록시 켬)를 추가해야 열린다.
